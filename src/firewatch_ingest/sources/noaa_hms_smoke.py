@@ -1,36 +1,44 @@
 """NOAA HMS smoke plumes — daily analyst-curated smoke polygons over North America.
 
-Source: https://www.ospo.noaa.gov/Products/land/hms/data/latest_smoke_final.kml
+The "latest_smoke_final.kml" URL is just a NetworkLink wrapper; the real data
+is a KMZ at ospo.noaa.gov/data/spl/kmlfiles/fire/smoke.kmz, which contains a
+single smoke.kml file with Placemark/Polygon features (when smoke is present).
 
-The "final" KML is human-QC'd; if absent, fall back to the preliminary KML.
-We convert KML <Placemark><Polygon> entries to GeoJSON Polygon features,
-preserving ExtendedData fields (smoke density, start/end times).
+We convert each smoke Placemark to a GeoJSON Polygon feature, preserving
+ExtendedData fields (smoke density, start/end times). On clean-air days the
+KML legitimately contains zero Placemarks — that's not an error.
 """
 from __future__ import annotations
 
+import io
 import logging
 import re
-import requests
 import xml.etree.ElementTree as ET
+import zipfile
+
+import requests
 
 from firewatch_ingest.gcs import write_geojson, write_raw
 
 log = logging.getLogger(__name__)
 
-PRIMARY = "https://www.ospo.noaa.gov/Products/land/hms/data/latest_smoke_final.kml"
-FALLBACK = "https://www.ospo.noaa.gov/Products/land/hms/data/latest_smoke.kml"
+KMZ_URL = "https://www.ospo.noaa.gov/data/spl/kmlfiles/fire/smoke.kmz"
 
 KML_NS = {"k": "http://www.opengis.net/kml/2.2"}
 
 
-def _fetch_kml() -> bytes:
-    for url in (PRIMARY, FALLBACK):
-        r = requests.get(url, timeout=120)
-        if r.status_code == 200 and r.content.strip():
-            log.info("fetched HMS smoke from %s (%d bytes)", url, len(r.content))
-            return r.content
-        log.warning("HMS smoke fetch failed at %s: %s", url, r.status_code)
-    raise RuntimeError("could not fetch HMS smoke KML from any URL")
+def _fetch_kml_from_kmz() -> bytes:
+    log.info("fetching HMS smoke KMZ from %s", KMZ_URL)
+    r = requests.get(KMZ_URL, timeout=120)
+    r.raise_for_status()
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        kml_names = [n for n in zf.namelist() if n.lower().endswith(".kml")]
+        if not kml_names:
+            raise RuntimeError(f"no .kml file inside KMZ; contents: {zf.namelist()}")
+        # Prefer one named smoke.kml at the root; otherwise take the first.
+        chosen = next((n for n in kml_names if n.lower() == "smoke.kml"), kml_names[0])
+        log.info("extracting %s from KMZ (%d bytes total)", chosen, len(r.content))
+        return zf.read(chosen)
 
 
 def _parse_coords(text: str) -> list[list[float]]:
@@ -54,6 +62,11 @@ def _kml_to_geojson(kml_bytes: bytes) -> dict:
     root = ET.fromstring(kml_bytes)
     features = []
     for pm in root.iter("{http://www.opengis.net/kml/2.2}Placemark"):
+        # Skip ScreenOverlays and chrome — only keep Placemarks with a Polygon
+        coords_el = pm.find(".//k:Polygon//k:outerBoundaryIs//k:LinearRing//k:coordinates", KML_NS)
+        if coords_el is None or not coords_el.text:
+            continue
+
         props: dict = {}
         name_el = pm.find("k:name", KML_NS)
         if name_el is not None and name_el.text:
@@ -64,9 +77,6 @@ def _kml_to_geojson(kml_bytes: bytes) -> dict:
             if key and value_el is not None:
                 props[key] = (value_el.text or "").strip()
 
-        coords_el = pm.find(".//k:Polygon//k:outerBoundaryIs//k:LinearRing//k:coordinates", KML_NS)
-        if coords_el is None or not coords_el.text:
-            continue
         ring = _parse_coords(coords_el.text)
         if len(ring) < 4:
             continue
@@ -81,8 +91,8 @@ def _kml_to_geojson(kml_bytes: bytes) -> dict:
 
 
 def run() -> None:
-    log.info("fetching NOAA HMS smoke KML")
-    kml = _fetch_kml()
-    write_raw("noaa_hms_smoke", kml, "kml")
-    gj = _kml_to_geojson(kml)
+    kml_bytes = _fetch_kml_from_kmz()
+    write_raw("noaa_hms_smoke", kml_bytes, "kml")
+    gj = _kml_to_geojson(kml_bytes)
+    log.info("parsed %d smoke polygons", len(gj["features"]))
     write_geojson("noaa_hms_smoke", gj)
