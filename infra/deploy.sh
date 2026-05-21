@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Deploy firewatch-ingest:
-#   1. Build & push image via Cloud Build
-#   2. Create/update one Cloud Run Job per source
-#   3. Wire a Cloud Scheduler trigger to each job with its native cadence
+# Manual deploy of the firewatch-ingest jobs (build + push + deploy).
+# GitHub Actions (.github/workflows/deploy.yml) is the normal path; this script
+# exists as a manual fallback / from-scratch bootstrap.
 #
 # Prerequisites:
 #   - gcloud authenticated with project sandbox-day3 set
 #   - FIRMS_MAP_KEY already stored in Secret Manager (secret name: firms-map-key)
 #     See: infra/store_firms_key.sh
+#   - For Cloud Scheduler triggers, run infra/setup-scheduler.sh separately.
 
 set -euo pipefail
 
@@ -77,43 +77,13 @@ deploy_job cwfis_perimeters
 deploy_job firms_canada
 deploy_job noaa_hms_smoke
 
-echo "==> Granting scheduler SA permission to run jobs"
-for source in cwfis_hotspots cwfis_perimeters firms_canada noaa_hms_smoke; do
-  job_name="firewatch-${source//_/-}"
-  gcloud run jobs add-iam-policy-binding "${job_name}" \
-    --region "${REGION}" --project "${PROJECT}" \
-    --member="serviceAccount:${SCHEDULER_SA_EMAIL}" \
-    --role="roles/run.invoker" >/dev/null
-done
-
-create_schedule() {
-  local source="$1"
-  local cron="$2"
-  local job_name="firewatch-${source//_/-}"
-  local sched_name="${job_name}-trigger"
-  local uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${job_name}:run"
-
-  echo "==> Scheduling ${sched_name} (${cron})"
-  gcloud scheduler jobs describe "${sched_name}" \
-    --location "${REGION}" --project "${PROJECT}" >/dev/null 2>&1 \
-    && gcloud scheduler jobs delete "${sched_name}" \
-         --location "${REGION}" --project "${PROJECT}" --quiet || true
-
-  gcloud scheduler jobs create http "${sched_name}" \
-    --location "${REGION}" --project "${PROJECT}" \
-    --schedule "${cron}" \
-    --time-zone "UTC" \
-    --uri "${uri}" \
-    --http-method POST \
-    --oauth-service-account-email "${SCHEDULER_SA_EMAIL}"
-}
-
-# Cadences match each source's native refresh rate (Woz: don't over-poll).
-create_schedule cwfis_hotspots    "0 * * * *"     # hourly
-create_schedule cwfis_perimeters  "0 */3 * * *"   # every 3 hours
-create_schedule firms_canada      "30 */3 * * *"  # every 3 hours, offset
-create_schedule noaa_hms_smoke    "0 18 * * *"    # daily 18:00 UTC (~1pm ET)
+# Cloud Scheduler triggers are set up by infra/setup-scheduler.sh.
+# (Cloud Scheduler isn't available in northamerica-northeast2 Toronto,
+# so schedulers live in northamerica-northeast1 Montreal and call cross-region.)
 
 echo
-echo "✓ Deploy complete. Trigger a job manually with:"
-echo "  gcloud run jobs execute firewatch-cwfis-hotspots --region ${REGION} --project ${PROJECT}"
+echo "✓ Deploy complete."
+echo "  · Trigger a job manually:"
+echo "      gcloud run jobs execute firewatch-cwfis-hotspots --region ${REGION} --project ${PROJECT}"
+echo "  · Set up the recurring schedule (one-time):"
+echo "      ./infra/setup-scheduler.sh"
