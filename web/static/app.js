@@ -1,7 +1,13 @@
 // FireWatch Canada — vanilla JS, MapLibre GL.
-// Layers, ranking, hover, and a sidebar. No build step.
+// Layers, ranking, hover, refresh-on-demand.
 
 const SOURCES = ["cwfis_hotspots", "cwfis_perimeters", "firms_canada", "noaa_hms_smoke"];
+
+const state = {
+  data: { cwfis_hotspots: null, cwfis_perimeters: null, firms_canada: null, noaa_hms_smoke: null, cities: null },
+  refreshing: false,
+  cooldownUntil: 0,
+};
 
 const map = new maplibregl.Map({
   container: "map",
@@ -70,33 +76,52 @@ function fmtTimeAgo(iso) {
   return `${Math.floor(hrs / 24)} d ago`;
 }
 
-// ---------- data load ----------
-
-async function loadAll() {
-  const fetches = SOURCES.map((s) =>
-    fetch(`/data/${s}.geojson`).then((r) => r.json()).catch(() => emptyFC())
-  );
-  fetches.push(fetch("cities.json").then((r) => r.json()));
-  const [hotspots, perimeters, firms, smoke, cities] = await Promise.all(fetches);
-  return { hotspots, perimeters, firms, smoke, cities };
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 }
 
-function emptyFC() {
-  return { type: "FeatureCollection", features: [], metadata: {} };
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// ---------- data fetch ----------
+
+async function fetchSource(source, { fresh = false } = {}) {
+  const url = `/data/${source}.geojson${fresh ? "?fresh=1" : ""}`;
+  try {
+    const r = await fetch(url, { cache: fresh ? "no-store" : "default" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    console.warn(`fetch ${source} failed:`, e);
+    return { type: "FeatureCollection", features: [], metadata: {} };
+  }
+}
+
+async function loadAll({ fresh = false } = {}) {
+  const [hotspots, perimeters, firms, smoke, cities] = await Promise.all([
+    ...SOURCES.map((s) => fetchSource(s, { fresh })),
+    state.data.cities ? Promise.resolve(state.data.cities) : fetch("cities.json").then((r) => r.json()),
+  ]);
+  state.data.cwfis_hotspots = hotspots;
+  state.data.cwfis_perimeters = perimeters;
+  state.data.firms_canada = firms;
+  state.data.noaa_hms_smoke = smoke;
+  state.data.cities = cities;
+  return state.data;
 }
 
 // ---------- map setup ----------
 
 map.on("load", async () => {
-  const data = await loadAll();
+  await loadAll();
 
-  map.addSource("smoke", { type: "geojson", data: data.smoke });
-  map.addSource("perimeters", { type: "geojson", data: data.perimeters });
-  map.addSource("hotspots", { type: "geojson", data: data.hotspots });
-  map.addSource("firms", { type: "geojson", data: data.firms });
-  map.addSource("cities", { type: "geojson", data: data.cities });
+  map.addSource("smoke", { type: "geojson", data: state.data.noaa_hms_smoke });
+  map.addSource("perimeters", { type: "geojson", data: state.data.cwfis_perimeters });
+  map.addSource("hotspots", { type: "geojson", data: state.data.cwfis_hotspots });
+  map.addSource("firms", { type: "geojson", data: state.data.firms_canada });
+  map.addSource("cities", { type: "geojson", data: state.data.cities });
 
-  // smoke
   map.addLayer({
     id: "smoke-fill",
     type: "fill",
@@ -113,70 +138,31 @@ map.on("load", async () => {
       "fill-opacity": 0.18,
     },
   });
-
-  // perimeters
+  map.addLayer({ id: "perimeters-fill", type: "fill", source: "perimeters",
+    paint: { "fill-color": "#ff6432", "fill-opacity": 0.35 } });
+  map.addLayer({ id: "perimeters-line", type: "line", source: "perimeters",
+    paint: { "line-color": "#ff6432", "line-width": 1.2, "line-opacity": 0.85 } });
+  map.addLayer({ id: "hotspots-circle", type: "circle", source: "hotspots", paint: {
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 1.5, 8, 4],
+    "circle-color": "#ffb432",
+    "circle-opacity": 0.85,
+    "circle-stroke-color": "#ff6432",
+    "circle-stroke-width": 0.5,
+  }});
+  map.addLayer({ id: "firms-circle", type: "circle", source: "firms", paint: {
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 1.2, 8, 3.5],
+    "circle-color": "#ffe650",
+    "circle-opacity": 0.8,
+  }});
+  map.addLayer({ id: "cities-circle", type: "circle", source: "cities", paint: {
+    "circle-radius": ["interpolate", ["linear"], ["get", "population"], 5, 1.5, 100, 2.5, 3000, 5],
+    "circle-color": "#ffffff",
+    "circle-opacity": 0.55,
+    "circle-stroke-color": "#000",
+    "circle-stroke-width": 0.5,
+  }});
   map.addLayer({
-    id: "perimeters-fill",
-    type: "fill",
-    source: "perimeters",
-    paint: { "fill-color": "#ff6432", "fill-opacity": 0.35 },
-  });
-  map.addLayer({
-    id: "perimeters-line",
-    type: "line",
-    source: "perimeters",
-    paint: { "line-color": "#ff6432", "line-width": 1.2, "line-opacity": 0.85 },
-  });
-
-  // hotspots (CWFIS)
-  map.addLayer({
-    id: "hotspots-circle",
-    type: "circle",
-    source: "hotspots",
-    paint: {
-      "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 1.5, 8, 4],
-      "circle-color": "#ffb432",
-      "circle-opacity": 0.85,
-      "circle-stroke-color": "#ff6432",
-      "circle-stroke-width": 0.5,
-    },
-  });
-
-  // FIRMS (NASA)
-  map.addLayer({
-    id: "firms-circle",
-    type: "circle",
-    source: "firms",
-    paint: {
-      "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 1.2, 8, 3.5],
-      "circle-color": "#ffe650",
-      "circle-opacity": 0.8,
-    },
-  });
-
-  // cities
-  map.addLayer({
-    id: "cities-circle",
-    type: "circle",
-    source: "cities",
-    paint: {
-      "circle-radius": [
-        "interpolate", ["linear"], ["get", "population"],
-        5, 1.5,
-        100, 2.5,
-        3000, 5,
-      ],
-      "circle-color": "#ffffff",
-      "circle-opacity": 0.55,
-      "circle-stroke-color": "#000",
-      "circle-stroke-width": 0.5,
-    },
-  });
-  map.addLayer({
-    id: "cities-label",
-    type: "symbol",
-    source: "cities",
-    minzoom: 3.5,
+    id: "cities-label", type: "symbol", source: "cities", minzoom: 3.5,
     layout: {
       "text-field": ["get", "name"],
       "text-size": ["interpolate", ["linear"], ["zoom"], 3.5, 9, 7, 13],
@@ -184,56 +170,63 @@ map.on("load", async () => {
       "text-anchor": "top",
       "text-font": ["Open Sans Regular"],
     },
-    paint: {
-      "text-color": "#dddddd",
-      "text-halo-color": "#000",
-      "text-halo-width": 1.2,
-    },
+    paint: { "text-color": "#dddddd", "text-halo-color": "#000", "text-halo-width": 1.2 },
   });
 
-  // hover interactions
   setupHover();
-
-  // layer toggles
   setupLayerToggles();
+  setupRefreshButton();
+  renderAll();
 
-  // sidebar
-  renderStats(data);
-  const ranking = rankPerimeters(data.perimeters, data.cities);
-  renderRanking(ranking);
-  renderFreshness(data);
+  // Auto-refresh freshness label every 30s without re-fetching
+  setInterval(renderFreshness, 30000);
 });
 
-// ---------- ranking ----------
+// ---------- update all rendered views from current state.data ----------
 
-function rankPerimeters(perimeters, cities) {
-  const items = [];
-  for (const f of perimeters.features) {
-    const c = centroidOf(f.geometry);
-    if (!c) continue;
-    const near = nearestCity(c, cities);
-    if (!near) continue;
-    items.push({
-      feature: f,
-      centroid: c,
-      city: near.city,
-      distKm: near.distKm,
-    });
-  }
-  items.sort((a, b) => a.distKm - b.distKm);
-  return items.slice(0, 10);
+function renderAll() {
+  // Push current data into map sources (in case it changed)
+  if (map.getSource("smoke")) map.getSource("smoke").setData(state.data.noaa_hms_smoke);
+  if (map.getSource("perimeters")) map.getSource("perimeters").setData(state.data.cwfis_perimeters);
+  if (map.getSource("hotspots")) map.getSource("hotspots").setData(state.data.cwfis_hotspots);
+  if (map.getSource("firms")) map.getSource("firms").setData(state.data.firms_canada);
+
+  renderStats();
+  renderRanking();
+  renderFreshness();
 }
 
-function renderRanking(items) {
+function renderStats() {
+  document.getElementById("stat-perimeters").textContent =
+    state.data.cwfis_perimeters.features.length.toLocaleString();
+  document.getElementById("stat-hotspots").textContent = (
+    state.data.cwfis_hotspots.features.length + state.data.firms_canada.features.length
+  ).toLocaleString();
+  document.getElementById("stat-smoke").textContent =
+    state.data.noaa_hms_smoke.features.length.toLocaleString();
+}
+
+function renderRanking() {
+  const items = [];
+  for (const f of state.data.cwfis_perimeters.features) {
+    const c = centroidOf(f.geometry);
+    if (!c) continue;
+    const near = nearestCity(c, state.data.cities);
+    if (!near) continue;
+    items.push({ feature: f, centroid: c, city: near.city, distKm: near.distKm });
+  }
+  items.sort((a, b) => a.distKm - b.distKm);
+  const top = items.slice(0, 10);
+
   const list = document.getElementById("ranking-list");
   const empty = document.getElementById("ranking-empty");
   list.innerHTML = "";
-  if (items.length === 0) {
+  if (top.length === 0) {
     empty.hidden = false;
     return;
   }
   empty.hidden = true;
-  for (const it of items) {
+  for (const it of top) {
     const li = document.createElement("li");
     const props = it.feature.properties || {};
     const fireName =
@@ -253,25 +246,9 @@ function renderRanking(items) {
   }
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
-// ---------- stats / freshness ----------
-
-function renderStats(data) {
-  document.getElementById("stat-perimeters").textContent = data.perimeters.features.length.toLocaleString();
-  document.getElementById("stat-hotspots").textContent = (
-    data.hotspots.features.length + data.firms.features.length
-  ).toLocaleString();
-  document.getElementById("stat-smoke").textContent = data.smoke.features.length.toLocaleString();
-}
-
-function renderFreshness(data) {
-  const stamps = [data.hotspots, data.perimeters, data.firms, data.smoke]
-    .map((d) => d?.metadata?.fetched_at)
+function renderFreshness() {
+  const stamps = SOURCES
+    .map((s) => state.data[s]?.metadata?.fetched_at)
     .filter(Boolean);
   if (stamps.length === 0) {
     document.getElementById("freshness").textContent = "Data freshness unknown";
@@ -362,4 +339,147 @@ function setupLayerToggles() {
       }
     });
   }
+}
+
+// ---------- refresh ----------
+
+function setupRefreshButton() {
+  document.getElementById("refresh-btn").addEventListener("click", onRefreshClick);
+}
+
+async function onRefreshClick() {
+  if (state.refreshing) return;
+  const btn = document.getElementById("refresh-btn");
+  const label = btn.querySelector(".label");
+  const freshness = document.getElementById("freshness");
+  const now = Date.now();
+
+  if (now < state.cooldownUntil) {
+    const wait = Math.ceil((state.cooldownUntil - now) / 1000);
+    showCooldown(wait);
+    return;
+  }
+
+  state.refreshing = true;
+  btn.disabled = true;
+  btn.classList.add("spinning");
+  label.textContent = "Refreshing";
+  freshness.textContent = "Pulling fresh data…";
+
+  let resp;
+  try {
+    resp = await fetch("/refresh", { method: "POST" });
+  } catch (e) {
+    finishError("Network error");
+    return;
+  }
+  const body = await resp.json().catch(() => ({}));
+
+  if (resp.status === 429) {
+    const wait = body.retry_after_seconds || 30;
+    state.cooldownUntil = Date.now() + wait * 1000;
+    showCooldown(wait);
+    return;
+  }
+  if (!resp.ok || (body.triggered || []).length === 0) {
+    finishError("Refresh failed");
+    return;
+  }
+
+  // Start cooldown so the next click is blocked
+  state.cooldownUntil = Date.now() + (body.cooldown_seconds || 30) * 1000;
+
+  // Poll for updated fetched_at on the triggered sources
+  const initialStamps = {};
+  for (const s of body.triggered) initialStamps[s] = state.data[s]?.metadata?.fetched_at;
+  const pollSeconds = body.poll_for_seconds || 30;
+  const deadline = Date.now() + pollSeconds * 1000;
+  const remaining = new Set(body.triggered);
+
+  while (Date.now() < deadline && remaining.size > 0) {
+    await sleep(3000);
+    label.textContent = `Refreshing (${Math.max(0, Math.ceil((deadline - Date.now()) / 1000))}s)`;
+    for (const s of [...remaining]) {
+      const fresh = await fetchSource(s, { fresh: true });
+      const newStamp = fresh?.metadata?.fetched_at;
+      if (newStamp && newStamp !== initialStamps[s]) {
+        state.data[s] = fresh;
+        const sourceId = sourceIdFor(s);
+        if (sourceId && map.getSource(sourceId)) {
+          map.getSource(sourceId).setData(fresh);
+        }
+        remaining.delete(s);
+      }
+    }
+    renderStats();
+    renderRanking();
+    renderFreshness();
+  }
+
+  finishOk(body.triggered.length - remaining.size);
+}
+
+function sourceIdFor(source) {
+  return ({
+    cwfis_hotspots: "hotspots",
+    cwfis_perimeters: "perimeters",
+    firms_canada: "firms",
+    noaa_hms_smoke: "smoke",
+  })[source];
+}
+
+function finishOk(updatedCount) {
+  state.refreshing = false;
+  const btn = document.getElementById("refresh-btn");
+  btn.classList.remove("spinning");
+  const label = btn.querySelector(".label");
+
+  if (updatedCount === 0) {
+    label.textContent = "No new data";
+  } else {
+    label.textContent = "Updated";
+  }
+  setTimeout(() => {
+    label.textContent = "Refresh";
+    btn.disabled = Date.now() < state.cooldownUntil;
+    if (btn.disabled) startCooldownCountdown();
+  }, 2500);
+}
+
+function finishError(msg) {
+  state.refreshing = false;
+  const btn = document.getElementById("refresh-btn");
+  btn.classList.remove("spinning");
+  btn.querySelector(".label").textContent = msg;
+  setTimeout(() => {
+    btn.querySelector(".label").textContent = "Refresh";
+    btn.disabled = false;
+  }, 2500);
+}
+
+function showCooldown(seconds) {
+  state.refreshing = false;
+  const btn = document.getElementById("refresh-btn");
+  btn.classList.remove("spinning");
+  btn.classList.add("cooldown");
+  btn.disabled = true;
+  startCooldownCountdown();
+}
+
+function startCooldownCountdown() {
+  const btn = document.getElementById("refresh-btn");
+  const label = btn.querySelector(".label");
+  btn.classList.add("cooldown");
+  const tick = () => {
+    const remain = Math.ceil((state.cooldownUntil - Date.now()) / 1000);
+    if (remain <= 0) {
+      label.textContent = "Refresh";
+      btn.disabled = false;
+      btn.classList.remove("cooldown");
+      return;
+    }
+    label.textContent = `Wait ${remain}s`;
+    setTimeout(tick, 1000);
+  };
+  tick();
 }

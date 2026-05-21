@@ -50,6 +50,63 @@ html, body {
   backdrop-filter: blur(12px);
 }
 
+.header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 100, 50, 0.12);
+  border: 1px solid rgba(255, 100, 50, 0.35);
+  border-radius: 6px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+#refresh-btn:hover:not(:disabled) {
+  background: rgba(255, 100, 50, 0.22);
+}
+
+#refresh-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+#refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+#refresh-btn .icon {
+  flex: none;
+  transition: transform 0.2s linear;
+}
+
+#refresh-btn.spinning .icon {
+  animation: spin 0.9s linear infinite;
+}
+
+#refresh-btn.cooldown {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 #sidebar h1 {
   font-size: 14px;
   font-weight: 700;
