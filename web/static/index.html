@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FireWatch Canada</title>
+  <meta name="description" content="Active wildfires across Canada, refreshed continuously from CWFIS, NASA FIRMS, and NOAA HMS." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A5%3C/text%3E%3C/svg%3E" />
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link href="style.css" rel="stylesheet" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <aside id="sidebar">
+    <header>
+      <h1>FIREWATCH</h1>
+      <p class="tag">Active wildfires across Canada</p>
+    </header>
+
+    <section id="stats" class="card">
+      <div class="stat" data-key="perimeters">
+        <span class="num" id="stat-perimeters">—</span>
+        <span class="lbl">active perimeters</span>
+      </div>
+      <div class="stat" data-key="hotspots">
+        <span class="num" id="stat-hotspots">—</span>
+        <span class="lbl">hotspots, 24h</span>
+      </div>
+      <div class="stat" data-key="smoke">
+        <span class="num" id="stat-smoke">—</span>
+        <span class="lbl">smoke plumes</span>
+      </div>
+    </section>
+
+    <section id="ranking" class="card">
+      <h2>Closest to communities</h2>
+      <p class="muted" id="ranking-empty" hidden>No active fire perimeters today. The map is clear.</p>
+      <ol id="ranking-list"></ol>
+    </section>
+
+    <section id="layers" class="card">
+      <h2>Layers</h2>
+      <label><input type="checkbox" data-layer="perimeters" checked /> <span>Active fire perimeters</span></label>
+      <label><input type="checkbox" data-layer="hotspots" checked /> <span>CWFIS hotspots (24h)</span></label>
+      <label><input type="checkbox" data-layer="firms" checked /> <span>NASA FIRMS (VIIRS)</span></label>
+      <label><input type="checkbox" data-layer="smoke" checked /> <span>NOAA HMS smoke</span></label>
+      <label><input type="checkbox" data-layer="cities" checked /> <span>Communities</span></label>
+    </section>
+
+    <footer>
+      <p class="muted" id="freshness">Loading live data…</p>
+      <p class="src">Data: <a href="https://cwfis.cfs.nrcan.gc.ca" target="_blank" rel="noopener">CWFIS</a> · <a href="https://firms.modaps.eosdis.nasa.gov" target="_blank" rel="noopener">NASA FIRMS</a> · <a href="https://www.ospo.noaa.gov/products/land/hms.html" target="_blank" rel="noopener">NOAA HMS</a></p>
+    </footer>
+  </aside>
+
+  <div id="hover-card" hidden></div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -33,26 +33,36 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Compute image tag
+      - name: Compute image tags
         id: meta
         run: |
           TAG="${GITHUB_SHA::7}"
-          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/firewatch-ingest:${TAG}"
-          echo "tag=${TAG}"     >> "$GITHUB_OUTPUT"
-          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-          echo "Image: ${IMAGE}"
+          INGEST_IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/firewatch-ingest:${TAG}"
+          WEB_IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/firewatch-web:${TAG}"
+          echo "tag=${TAG}"                  >> "$GITHUB_OUTPUT"
+          echo "ingest_image=${INGEST_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "web_image=${WEB_IMAGE}"      >> "$GITHUB_OUTPUT"
+          echo "Ingest: ${INGEST_IMAGE}"
+          echo "Web:    ${WEB_IMAGE}"
 
-      - name: Build & push image (Cloud Build)
+      - name: Build & push ingest image
         run: |
           gcloud builds submit \
-            --tag "${{ steps.meta.outputs.image }}" \
+            --tag "${{ steps.meta.outputs.ingest_image }}" \
             --project "${PROJECT}" \
             --gcs-log-dir "gs://${BUCKET}/_cloudbuild-logs"
 
-      - name: Deploy Cloud Run Jobs
+      - name: Build & push web image
+        run: |
+          gcloud builds submit web \
+            --tag "${{ steps.meta.outputs.web_image }}" \
+            --project "${PROJECT}" \
+            --gcs-log-dir "gs://${BUCKET}/_cloudbuild-logs"
+
+      - name: Deploy ingest Cloud Run Jobs
         run: |
           set -euo pipefail
-          IMAGE="${{ steps.meta.outputs.image }}"
+          IMAGE="${{ steps.meta.outputs.ingest_image }}"
 
           deploy_job() {
             local source="$1"
@@ -79,13 +89,32 @@ jobs:
           deploy_job firms_canada
           deploy_job noaa_hms_smoke
 
+      - name: Deploy web Cloud Run Service
+        id: web
+        run: |
+          gcloud run deploy firewatch-web \
+            --image "${{ steps.meta.outputs.web_image }}" \
+            --region "${REGION}" --project "${PROJECT}" \
+            --service-account "${RUNTIME_SA}" \
+            --allow-unauthenticated \
+            --cpu 1 --memory 512Mi \
+            --concurrency 80 \
+            --min-instances 0 --max-instances 3 \
+            --set-env-vars "GCS_BUCKET=${BUCKET}"
+          URL=$(gcloud run services describe firewatch-web \
+            --region "${REGION}" --project "${PROJECT}" \
+            --format="value(status.url)")
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
       - name: Summary
         run: |
-          echo "### Deployed image" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`${{ steps.meta.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Updated jobs" >> "$GITHUB_STEP_SUMMARY"
-          echo "- firewatch-cwfis-hotspots" >> "$GITHUB_STEP_SUMMARY"
-          echo "- firewatch-cwfis-perimeters" >> "$GITHUB_STEP_SUMMARY"
-          echo "- firewatch-firms-canada" >> "$GITHUB_STEP_SUMMARY"
-          echo "- firewatch-noaa-hms-smoke" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### 🔥 FireWatch deployed"
+            echo ""
+            echo "**Dashboard:** ${{ steps.web.outputs.url }}"
+            echo ""
+            echo "**Ingest image:** \`${{ steps.meta.outputs.ingest_image }}\`"
+            echo "**Web image:** \`${{ steps.meta.outputs.web_image }}\`"
+            echo ""
+            echo "**Updated jobs:** firewatch-cwfis-hotspots, firewatch-cwfis-perimeters, firewatch-firms-canada, firewatch-noaa-hms-smoke"
+          } >> "$GITHUB_STEP_SUMMARY"

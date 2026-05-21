@@ -1,0 +1,233 @@
+:root {
+  --bg: #0b0d10;
+  --panel: rgba(14, 17, 21, 0.92);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text: #e8e8e8;
+  --muted: #888c91;
+  --accent: #ff6432;
+  --accent-2: #ffb432;
+  --good: #6cd089;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+#map {
+  position: fixed;
+  inset: 0;
+}
+
+#sidebar {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: 340px;
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+
+#sidebar > header {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 16px 18px 14px;
+  backdrop-filter: blur(12px);
+}
+
+#sidebar h1 {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+}
+
+#sidebar .tag {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  backdrop-filter: blur(12px);
+}
+
+.card h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+#stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 14px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+}
+
+.stat .num {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.stat .lbl {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-top: 2px;
+  text-align: center;
+}
+
+#ranking-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#ranking-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+#ranking-list li:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+#ranking-list li .where {
+  color: var(--text);
+  font-size: 13px;
+}
+
+#ranking-list li .where small {
+  color: var(--muted);
+  font-size: 11px;
+  display: block;
+}
+
+#ranking-list li .dist {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#layers label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+
+#layers input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+footer {
+  padding: 12px 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+footer .src a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px dotted rgba(255,255,255,0.15);
+}
+
+footer .src a:hover { color: var(--text); }
+
+#freshness { margin-bottom: 6px; }
+
+.muted { color: var(--muted); font-size: 12px; }
+
+#hover-card {
+  position: fixed;
+  pointer-events: none;
+  background: rgba(20, 24, 30, 0.96);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  z-index: 20;
+  max-width: 240px;
+  backdrop-filter: blur(8px);
+}
+
+#hover-card .pop-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+#hover-card .pop-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+}
+
+#hover-card .pop-row span:last-child {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.maplibregl-ctrl-attrib {
+  background: rgba(14, 17, 21, 0.6) !important;
+  color: var(--muted) !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--muted) !important;
+}
+
+/* mobile */
+@media (max-width: 720px) {
+  #sidebar { width: calc(100vw - 32px); }
+  .stat .num { font-size: 20px; }
+}
