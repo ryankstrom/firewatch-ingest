@@ -1,0 +1,90 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation
+
+env:
+  PROJECT: sandbox-day3
+  REGION: northamerica-northeast2
+  REPO: firewatch
+  BUCKET: sandbox-day3-firewatch-raw
+  RUNTIME_SA: firewatch-ingest@sandbox-day3.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/863281111819/locations/global/workloadIdentityPools/github/providers/github-actions
+  DEPLOYER_SA: firewatch-deployer@sandbox-day3.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          TAG="${GITHUB_SHA::7}"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/firewatch-ingest:${TAG}"
+          echo "tag=${TAG}"     >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Image: ${IMAGE}"
+
+      - name: Build & push image (Cloud Build)
+        run: |
+          gcloud builds submit \
+            --tag "${{ steps.meta.outputs.image }}" \
+            --project "${PROJECT}"
+
+      - name: Deploy Cloud Run Jobs
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.meta.outputs.image }}"
+
+          deploy_job() {
+            local source="$1"
+            local job_name="firewatch-${source//_/-}"
+            local secrets_args=()
+            if [[ "$source" == "firms_canada" ]]; then
+              secrets_args=("--set-secrets" "FIRMS_MAP_KEY=firms-map-key:latest")
+            fi
+            echo "::group::Deploying ${job_name}"
+            gcloud run jobs deploy "${job_name}" \
+              --image "${IMAGE}" \
+              --region "${REGION}" --project "${PROJECT}" \
+              --service-account "${RUNTIME_SA}" \
+              --args "${source}" \
+              --max-retries 2 \
+              --task-timeout 600s \
+              --set-env-vars "GCP_PROJECT=${PROJECT},GCS_BUCKET=${BUCKET}" \
+              "${secrets_args[@]}"
+            echo "::endgroup::"
+          }
+
+          deploy_job cwfis_hotspots
+          deploy_job cwfis_perimeters
+          deploy_job firms_canada
+          deploy_job noaa_hms_smoke
+
+      - name: Summary
+        run: |
+          echo "### Deployed image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ steps.meta.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Updated jobs" >> "$GITHUB_STEP_SUMMARY"
+          echo "- firewatch-cwfis-hotspots" >> "$GITHUB_STEP_SUMMARY"
+          echo "- firewatch-cwfis-perimeters" >> "$GITHUB_STEP_SUMMARY"
+          echo "- firewatch-firms-canada" >> "$GITHUB_STEP_SUMMARY"
+          echo "- firewatch-noaa-hms-smoke" >> "$GITHUB_STEP_SUMMARY"
