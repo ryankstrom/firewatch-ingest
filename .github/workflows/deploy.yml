@@ -46,7 +46,8 @@ jobs:
         run: |
           gcloud builds submit \
             --tag "${{ steps.meta.outputs.image }}" \
-            --project "${PROJECT}"
+            --project "${PROJECT}" \
+            --gcs-log-dir "gs://${BUCKET}/_cloudbuild-logs"
 
       - name: Deploy Cloud Run Jobs
         run: |
